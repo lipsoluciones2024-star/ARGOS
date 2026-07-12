@@ -1,0 +1,16 @@
+title: Rundll32 Network Connection (Proxy Execution)
+id: a7d5b4f0-1b2c-4d3e-8f9a-000000000003
+status: stable
+description: Detects rundll32 making outbound network connections (T1218.011).
+references:
+  - https://attack.mitre.org/techniques/T1218/011/
+tags:
+  - attack.T1218.011
+logsource:
+  category: network_connection
+  product: windows
+detection:
+  selection:
+    Image|endswith: '\rundll32.exe'
+  condition: selection
+level: medium

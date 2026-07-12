@@ -1,0 +1,19 @@
+title: PowerShell Encoded Command
+id: a7d5b4f0-1b2c-4d3e-8f9a-000000000001
+status: stable
+description: Detects PowerShell invoked with an encoded command (common obfuscation).
+references:
+  - https://attack.mitre.org/techniques/T1059/001/
+tags:
+  - attack.T1059.001
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection:
+    Image|endswith: '\powershell.exe'
+    CommandLine|contains:
+      - '-enc'
+      - '-EncodedCommand'
+  condition: selection
+level: high

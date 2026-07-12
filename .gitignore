@@ -1,0 +1,19 @@
+# Modelos locales GGUF (binarios grandes, no commitear)
+models/**/*.gguf
+
+# Entornos virtuales / dependencias locales
+.venv/
+venv/
+__pycache__/
+*.pyc
+.env
+*.egg-info/
+dist/
+build/
+
+# Datos locales de runtime de ARGOS
+data/
+*.db
+*.sqlite
+*.sqlite3
+logs/

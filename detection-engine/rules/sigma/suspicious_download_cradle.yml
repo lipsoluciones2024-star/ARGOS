@@ -1,0 +1,19 @@
+title: Suspicious Download Cradle (Living off the Land)
+id: a7d5b4f0-1b2c-4d3e-8f9a-000000000002
+status: stable
+description: Detects common download cradles using IEX + Net.WebClient + DownloadString.
+references:
+  - https://attack.mitre.org/techniques/T1105/
+tags:
+  - attack.T1105
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection:
+    CommandLine|contains:
+      - 'IEX'
+      - 'Net.WebClient'
+      - 'DownloadString'
+  condition: selection
+level: medium
