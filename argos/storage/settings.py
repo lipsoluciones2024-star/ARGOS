@@ -20,6 +20,8 @@ DEFAULTS: dict[str, Any] = {
     "retention_days": 90,
     "scheduler.enabled": True,
     "scheduler.interval_sec": 60,
+    "network_monitor.enabled": False,
+    "network_monitor.interval_ticks": 1,
     "ui.theme": "midnight",
     "ui.refresh_sec": 5,
     "ui.density": "comfortable",

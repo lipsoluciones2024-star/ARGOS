@@ -1,0 +1,37 @@
+services:
+  argos-server:
+    build: .
+    image: argos:latest
+    container_name: argos-server
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      ARGOS_DATA_DIR: /data
+      ARGOS_REQUIRE_AUTH: "false"
+      ARGOS_SERVER_HOST: 0.0.0.0
+      ARGOS_LLM_MODE: hybrid
+    volumes:
+      - argos-data:/data
+      - ./models:/app/models
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health').status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  argos-agent:
+    build: .
+    image: argos:latest
+    container_name: argos-agent
+    restart: unless-stopped
+    command: ["python", "-m", "argos.agent"]
+    environment:
+      ARGOS_DATA_DIR: /data
+      ARGOS_SERVER_HOST: argos-server
+      ARGOS_SERVER_PORT: "8000"
+    volumes:
+      - argos-data:/data
+
+volumes:
+  argos-data:

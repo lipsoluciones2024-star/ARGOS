@@ -183,6 +183,22 @@ class EventStore:
         row = self.conn.execute("SELECT * FROM events WHERE event_id = ?", (event_id,)).fetchone()
         return self._row_to_event(row) if row else None
 
+    def process_inventory(self, limit: int = 200, host: str | None = None) -> list[dict[str, Any]]:
+        """Inventario de procesos únicos derivado de los eventos (process_name/pid/host/imagen)."""
+        sql = """
+            SELECT process_name, process_pid, host, process_image, process_cmdline, MAX(time) AS last_seen, COUNT(*) AS sightings
+            FROM events
+            WHERE category='process' AND process_name IS NOT NULL AND process_name <> ''
+        """
+        params: list[Any] = []
+        if host:
+            sql += " AND host = ?"
+            params.append(host)
+        sql += " GROUP BY host, process_name, process_pid ORDER BY sightings DESC LIMIT ?"
+        params.append(limit)
+        rows = self.conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
     def active_connections(self) -> list[OcsfEvent]:
         rows = self.conn.execute(
             "SELECT * FROM events WHERE category='network' ORDER BY time DESC LIMIT 200"
@@ -240,6 +256,17 @@ class AlertStore:
             """
         )
         self.conn.commit()
+        self._migrate()
+
+    def _migrate(self) -> None:
+        cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(alerts)").fetchall()}
+        if "acknowledged" not in cols:
+            self.conn.execute("ALTER TABLE alerts ADD COLUMN acknowledged INTEGER NOT NULL DEFAULT 0")
+        if "acknowledged_by" not in cols:
+            self.conn.execute("ALTER TABLE alerts ADD COLUMN acknowledged_by TEXT")
+        if "acknowledged_at" not in cols:
+            self.conn.execute("ALTER TABLE alerts ADD COLUMN acknowledged_at TEXT")
+        self.conn.commit()
 
     def add(self, alert) -> None:
         self.conn.execute(
@@ -249,6 +276,26 @@ class AlertStore:
         )
         self.conn.commit()
 
+    def ack(self, alert_id: str, by: str) -> dict[str, Any] | None:
+        row = self.conn.execute("SELECT id FROM alerts WHERE id=?", (alert_id,)).fetchone()
+        if not row:
+            return None
+        now = datetime.now(timezone.utc).isoformat()
+        self.conn.execute(
+            "UPDATE alerts SET acknowledged=1, acknowledged_by=?, acknowledged_at=? WHERE id=?",
+            (by, now, alert_id),
+        )
+        self.conn.commit()
+        return self.get(alert_id)
+
+    def get(self, alert_id: str) -> dict[str, Any] | None:
+        row = self.conn.execute("SELECT * FROM alerts WHERE id=?", (alert_id,)).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["acknowledged"] = bool(d.get("acknowledged"))
+        return d
+
     def recent(self, limit: int = 50, severity: str | None = None) -> list[dict[str, Any]]:
         if severity:
             rows = self.conn.execute(
@@ -257,14 +304,24 @@ class AlertStore:
             ).fetchall()
         else:
             rows = self.conn.execute("SELECT * FROM alerts ORDER BY time DESC LIMIT ?", (limit,)).fetchall()
-        return [dict(r) for r in rows]
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["acknowledged"] = bool(d.get("acknowledged"))
+            out.append(d)
+        return out
 
     def high_or_critical(self, limit: int = 50) -> list[dict[str, Any]]:
         rows = self.conn.execute(
             "SELECT * FROM alerts WHERE severity IN ('high','critical') ORDER BY time DESC LIMIT ?",
             (limit,),
         ).fetchall()
-        return [dict(r) for r in rows]
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["acknowledged"] = bool(d.get("acknowledged"))
+            out.append(d)
+        return out
 
 
 class AuditLog:

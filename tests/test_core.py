@@ -6,7 +6,7 @@ from argos.config import Config, SwitchLevel
 from argos.detection.alerts import ACTION_CATALOG
 from argos.detection.engine import DetectionEngine
 from argos.detection.threat_intel import ThreatIntel
-from argos.ocsf import EventCategory, OcsfEvent, Severity
+from argos.ocsf import EventCategory, OcsfEvent
 from argos.response.orchestrator import ResponseOrchestrator
 from argos.response.switch import AutonomySwitch, Decision
 from argos.storage.store import AlertStore, AuditLog, EventStore
@@ -99,8 +99,10 @@ def test_attack_coverage_blind_spots(tmp_path):
     cfg = make_cfg(tmp_path)
     engine = DetectionEngine(cfg)
     cov = engine.coverage()
-    assert any(v["status"] == "blind-spot" for v in cov.values())
-    assert "T1059.001" in cov
+    assert cov["total"] >= 1
+    assert cov["covered"] <= cov["total"]
+    assert any(v["status"] == "blind-spot" for v in cov["matrix"].values())
+    assert "T1059" in cov["matrix"]
 
 
 def test_privacy_guard_redacts_secret():
@@ -111,19 +113,37 @@ def test_privacy_guard_redacts_secret():
     assert "sk-1234567890abcdef" not in scrub_secrets(text)
 
 
-def test_tool_executor_allows_only_six(tmp_path):
+def test_tool_executor_read_and_action_tools(tmp_path):
     from argos.ai.tools import ALLOWED_TOOLS, ToolExecutor
 
     cfg = make_cfg(tmp_path)
     store = EventStore(cfg)
     engine = DetectionEngine(cfg, alert_store=AlertStore(cfg))
-    from argos.detection.threat_intel import ThreatIntel
 
     intel = ThreatIntel(cfg)
     intel.feed_sample()
     ex = ToolExecutor(store, engine, intel)
-    assert len(ALLOWED_TOOLS) == 6
+    read_tools = {
+        "query_events", "get_process_tree", "get_active_connections",
+        "list_alerts", "lookup_ioc", "explain_attck_technique",
+    }
+    action_tools = {
+        "propose_kill_process", "propose_block_ip", "propose_quarantine_file",
+        "propose_revert_registry", "propose_disable_account",
+        "propose_isolate_host", "propose_memory_snapshot",
+    }
+    new_tools = {
+        "get_hosts", "get_host_detail", "alerts_by_host", "get_audit_log",
+        "pending_proposals", "query_fim_events", "ip_reputation",
+        "detection_rules", "get_coverage", "undo_action", "notify", "run_playbook",
+        "network_recon", "scan_yara", "correlate",
+    }
+    assert read_tools <= ALLOWED_TOOLS
+    assert action_tools <= ALLOWED_TOOLS
+    assert new_tools <= ALLOWED_TOOLS
+    assert len(ALLOWED_TOOLS) == len(read_tools) + len(action_tools) + len(new_tools)
     assert ex.validate("query_events") is True
+    assert ex.validate("propose_kill_process") is True
     assert ex.validate("rm_tree") is False
     res = ex.execute("lookup_ioc", {"indicator": "185.220.101.1"})
     assert res.output["malicious"] is True

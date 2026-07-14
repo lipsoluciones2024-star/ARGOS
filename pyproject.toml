@@ -31,6 +31,7 @@ dev = [
 argos-server = "argos.server:main"
 argos-agent = "argos.agent:main"
 argos-cli = "argos.cli:main"
+argos-voice = "argos.voice_jarvis:main"
 
 [tool.setuptools.packages.find]
 include = ["argos*"]

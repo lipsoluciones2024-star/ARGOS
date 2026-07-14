@@ -5,15 +5,13 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from argos.config import Config, SwitchLevel
+from argos.config import Config
 from argos.detection.alerts import ACTION_CATALOG
-from argos.detection.engine import DetectionEngine
-from argos.detection.threat_intel import ThreatIntel
-from argos.ocsf import EventCategory, OcsfEvent, Severity
+from argos.ocsf import EventCategory, OcsfEvent
 from argos.response.orchestrator import ResponseOrchestrator
 from argos.server import AppContext, create_app
 from argos.storage.settings import SettingsStore
-from argos.storage.store import AlertStore, AuditLog, EventStore
+from argos.storage.store import AuditLog, EventStore
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -29,6 +27,7 @@ def make_cfg(tmp_path):
 @pytest.fixture
 def client(tmp_path):
     cfg = make_cfg(tmp_path)
+    cfg.require_auth = False
     ctx = AppContext(cfg)
     app = create_app(cfg)
     app.state.ctx = ctx

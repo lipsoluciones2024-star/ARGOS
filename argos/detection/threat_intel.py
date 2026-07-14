@@ -19,6 +19,25 @@ class ThreatIntel:
                 if line and not line.startswith("#"):
                     self.iocs.add(line.lower())
 
+    def list(self) -> list[str]:
+        return sorted(self.iocs)
+
+    def remove(self, indicator: str) -> bool:
+        indicator = indicator.strip().lower()
+        if indicator in self.iocs:
+            self.iocs.discard(indicator)
+            self._rewrite()
+            return True
+        return False
+
+    def _rewrite(self) -> None:
+        try:
+            self.store_path.write_text(
+                "\n".join(sorted(self.iocs)) + ("\n" if self.iocs else ""), encoding="utf-8"
+            )
+        except Exception:
+            pass
+
     def add(self, indicator: str) -> None:
         indicator = indicator.strip().lower()
         if not indicator:

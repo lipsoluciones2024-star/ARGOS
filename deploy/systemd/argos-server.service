@@ -1,0 +1,23 @@
+[Unit]
+Description=ARGOS Server (Agéntico de Observabilidad y Ciberdefensa Autónoma)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=argos
+Group=argos
+WorkingDirectory=/opt/argos
+ExecStart=/opt/argos/.venv/bin/python -m argos.server
+Environment=ARGOS_DATA_DIR=/var/lib/argos
+Environment=ARGOS_REQUIRE_AUTH=true
+Environment=ARGOS_AUTH_SECRET=change-me
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/argos /opt/argos/models
+
+[Install]
+WantedBy=multi-user.target

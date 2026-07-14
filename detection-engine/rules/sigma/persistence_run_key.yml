@@ -1,0 +1,15 @@
+title: Registry Run Key Persistence
+id: a7d5b4f0-1b2c-4d3e-8f9a-000000000011
+status: stable
+description: Detects writes to autorun registry keys used for persistence (T1547.001).
+tags:
+  - attack.T1547.001
+logsource:
+  category: registry_event
+  product: windows
+detection:
+  selection:
+    RegistryKey|contains:
+      - 'Software\\Microsoft\\Windows\\CurrentVersion\\Run'
+  condition: selection
+level: medium

@@ -66,10 +66,38 @@ class Scheduler:
         pushed = self.ctx.orchestrator.push_high_alerts()
         result["proactive_alerts"] = len(pushed)
 
+        try:
+            self._network_monitor()
+        except Exception as exc:  # keep the scheduler alive
+            self.recent_errors.append(f"{datetime.now(timezone.utc).isoformat()} {exc}")
+            self.recent_errors = self.recent_errors[-20:]
+
         self.metrics = self.snapshot_metrics()
         self.last_run = datetime.now(timezone.utc).isoformat()
         self.run_count += 1
         return result
+
+    def _network_monitor(self) -> None:
+        """Monitoreo continuo de red: escanea hosts en la lista de monitoreo y
+        compara contra su línea de base (Fase K). Desactivado por defecto."""
+        if not self.settings.get_bool("network_monitor.enabled", False):
+            return
+        interval = self.settings.get_int("network_monitor.interval_ticks", 1)
+        if interval > 1 and (self.run_count % interval) != 0:
+            return
+        targets = self.ctx.net_baseline.list_targets()
+        if not targets:
+            return
+        from argos.scan.monitor import run_monitor_scan
+
+        for host in targets:
+            try:
+                run_monitor_scan(self.ctx, host, by="scheduler")
+            except Exception as exc:  # do not break the loop on a single host
+                self.recent_errors.append(
+                    f"{datetime.now(timezone.utc).isoformat()} net_monitor {host}: {exc}"
+                )
+                self.recent_errors = self.recent_errors[-20:]
 
     def snapshot_metrics(self) -> dict[str, Any]:
         store = self.ctx.store
@@ -83,8 +111,9 @@ class Scheduler:
         top_hosts = [{"host": h, "events": c} for h, c in hosts.most_common(10)]
         cats = Counter(e.category for e in recent if e.category)
         coverage = self.ctx.engine.coverage()
-        covered = sum(1 for v in coverage.values() if v["status"] == "covered")
-        blind = sum(1 for v in coverage.values() if v["status"] == "blind-spot")
+        matrix = coverage.get("matrix", {})
+        covered = sum(1 for v in matrix.values() if v.get("status") == "covered")
+        blind = sum(1 for v in matrix.values() if v.get("status") == "blind-spot")
         return {
             "total_events": total,
             "by_severity": dict(sev_counter),
@@ -92,7 +121,7 @@ class Scheduler:
             "top_hosts": top_hosts,
             "series_24h": series,
             "attck_covered": covered,
-            "attck_total": len(coverage),
+            "attck_total": len(matrix),
             "attck_blind_spots": blind,
             "alerts_high": len(self.ctx.alert_store.high_or_critical(limit=50)),
             "switch": self.ctx.response.switch.level.value,

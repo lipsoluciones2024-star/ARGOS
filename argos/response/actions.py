@@ -3,30 +3,26 @@ from __future__ import annotations
 import json
 import platform
 import shutil
-import subprocess
 from pathlib import Path
 from typing import Any
 
 from argos.config import Config
 from argos.detection.alerts import ACTION_REVERSIBLE, ACTION_RISK
+from argos.util.cmd import run_command
 
 RESPONSE_ACTIONS = list(ACTION_RISK.keys())
 
 
 def _run(cmd: list[str]) -> dict[str, Any]:
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        return {"rc": r.returncode, "stdout": r.stdout[:2000], "stderr": r.stderr[:2000]}
-    except Exception as exc:
-        return {"rc": -1, "error": str(exc)}
+    return run_command(cmd, timeout=30)
 
 
-def _registry_backups(cfg: Config) -> Path:
-    return cfg.data_dir / "registry_backups.json"
+_REGISTRY_BACKUPS = "registry_backups.json"
+_FIREWALL_BLOCKS = "firewall_blocks.json"
 
 
-def _load_backups(cfg: Config) -> dict[str, Any]:
-    path = _registry_backups(cfg)
+def _load_json(cfg: Config, name: str) -> dict[str, Any]:
+    path = cfg.data_dir / name
     if path.exists():
         try:
             return json.loads(path.read_text(encoding="utf-8"))
@@ -35,8 +31,8 @@ def _load_backups(cfg: Config) -> dict[str, Any]:
     return {}
 
 
-def _save_backups(cfg: Config, data: dict[str, Any]) -> None:
-    _registry_backups(cfg).write_text(json.dumps(data, indent=2), encoding="utf-8")
+def _save_json(cfg: Config, name: str, data: dict[str, Any]) -> None:
+    (cfg.data_dir / name).write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 def execute_action(cfg: Config, action: str, target: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -48,10 +44,15 @@ def execute_action(cfg: Config, action: str, target: str, params: dict[str, Any]
         return _run(["kill", "-9", str(pid)])
     if action == "block_ip":
         ip = target
+        name = _block_rule_name(ip)
         if platform.system() == "Windows":
-            return _run(["netsh", "advfirewall", "firewall", "add", "rule",
-                         "name=ARGOS_BLOCK", "dir=out", "action=block", f"remoteip={ip}"])
-        return _run(["iptables", "-A", "OUTPUT", "-d", ip, "-j", "DROP"])
+            res = _run(["netsh", "advfirewall", "firewall", "add", "rule",
+                        f"name={name}", "dir=out", "action=block", f"remoteip={ip}"])
+        else:
+            res = _run(["iptables", "-A", "OUTPUT", "-d", ip, "-j", "DROP"])
+        _record_firewall_block(cfg, ip, name)
+        res["rule_name"] = name
+        return res
     if action == "quarantine_file":
         src = Path(target)
         if src.exists():
@@ -80,7 +81,7 @@ def _revert_registry(cfg: Config, target: str, params: dict[str, Any]) -> dict[s
     if "value" in params and params["value"] is not None:
         value = params["value"]
     else:
-        backups = _load_backups(cfg)
+        backups = _load_json(cfg, _REGISTRY_BACKUPS)
         if key not in backups:
             return {"error": f"no registry backup stored for {key}; provide 'value' to restore"}
         value = backups[key]["value"]
@@ -134,9 +135,75 @@ def _memory_snapshot(cfg: Config, target: str, params: dict[str, Any]) -> dict[s
     return {"error": f"memory capture not supported on {platform.system()}", "target": target}
 
 
+def _block_rule_name(ip: str) -> str:
+    return "ARGOS_BLOCK_" + ip.replace(".", "_").replace(":", "_").replace("/", "_")
+
+
+def _record_firewall_block(cfg: Config, ip: str, name: str) -> None:
+    blocks = _load_json(cfg, _FIREWALL_BLOCKS)
+    blocks[ip] = name
+    _save_json(cfg, _FIREWALL_BLOCKS, blocks)
+
+
+def remove_firewall_block(cfg: Config, ip: str) -> dict[str, Any]:
+    name = _block_rule_name(ip)
+    if platform.system() == "Windows":
+        res = _run(["netsh", "advfirewall", "firewall", "delete", "rule", f"name={name}"])
+    else:
+        res = _run(["iptables", "-D", "OUTPUT", "-d", ip, "-j", "DROP"])
+    blocks = _load_json(cfg, _FIREWALL_BLOCKS)
+    blocks.pop(ip, None)
+    _save_json(cfg, _FIREWALL_BLOCKS, blocks)
+    res["removed_rule"] = name
+    return res
+
+
 def action_risk(action: str) -> str:
     return ACTION_RISK.get(action, "unknown")
 
 
 def action_reversible(action: str) -> str:
     return ACTION_REVERSIBLE.get(action, "unknown")
+
+
+def undo_action(cfg: Config, action: str, target: str, params: dict[str, Any] | None = None,
+                exec_result: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Revierte una acción ejecutada (solo las reversibles)."""
+    params = params or {}
+    if action == "block_ip":
+        return remove_firewall_block(cfg, target)
+    if action == "quarantine_file":
+        src = Path(target)
+        moved = (exec_result or {}).get("moved")
+        if moved:
+            src = Path(moved)
+        restore = params.get("restore_path") or target
+        if src.exists():
+            shutil.move(str(src), str(restore))
+            return {"restored": str(restore)}
+        return {"error": "archivo en cuarentena no encontrado"}
+    if action == "disable_account":
+        user = target
+        if platform.system() == "Windows":
+            return _run(["net", "user", user, "/active:yes"])
+        return _run(["usermod", "-U", user])
+    if action == "isolate_host":
+        return _undo_isolate_host(cfg)
+    return {"error": f"accion '{action}' no es reversible automaticamente",
+            "reversible": action_reversible(action)}
+
+
+def _undo_isolate_host(cfg: Config) -> dict[str, Any]:
+    if platform.system() == "Windows":
+        rules = [
+            ["netsh", "advfirewall", "firewall", "delete", "rule", "name=ARGOS_ISO_IN"],
+            ["netsh", "advfirewall", "firewall", "delete", "rule", "name=ARGOS_ISO_OUT"],
+        ]
+        results = [r for r in (_run(c) for c in rules)]
+        return {"isolated": False, "platform": "windows", "results": results}
+    results = [
+        _run(["iptables", "-D", "OUTPUT", "-m", "state", "--state", "ESTABLISHED", "-j", "ACCEPT"]),
+        _run(["iptables", "-P", "INPUT", "ACCEPT"]),
+        _run(["iptables", "-P", "FORWARD", "ACCEPT"]),
+    ]
+    return {"isolated": False, "platform": "linux", "results": results}
