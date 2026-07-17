@@ -140,6 +140,48 @@ def cmd_install_service(args, ctx: AppContext) -> None:
               f"(crea antes el usuario 'argos' y /var/lib/argos)")
 
 
+def cmd_plugins(args, ctx: AppContext) -> None:
+    print("Plugins instalados:")
+    for p in ctx.plugin_registry.list_installed():
+        print(f"  - {p['name']} v{p['version']} [{ 'on' if p['enabled'] else 'off' }] hooks={p.get('hook_count',0)}")
+    avail = ctx.plugin_registry.available_in_marketplace()
+    if avail:
+        print("\nDisponibles en marketplace:")
+        for p in avail:
+            print(f"  + {p['name']} ({p['category']}) - {p['description']}")
+
+
+def cmd_plugin_install(args, ctx: AppContext) -> None:
+    from argos.plugins.base import PluginManifest
+    from argos.plugins.marketplace import MARKETPLACE
+
+    m = MARKETPLACE.get(args.name)
+    if m is None:
+        print(f"plugin '{args.name}' no encontrado en el marketplace")
+        raise SystemExit(1)
+    ok = ctx.plugin_manager.install(m if isinstance(m, PluginManifest) else PluginManifest.from_dict(m))
+    print(f"instalado={ok} {args.name}")
+
+
+def cmd_plugin_uninstall(args, ctx: AppContext) -> None:
+    ok = ctx.plugin_manager.uninstall(args.name)
+    print(f"desinstalado={ok} {args.name}")
+
+
+def cmd_plugin_enable(args, ctx: AppContext) -> None:
+    print(f"habilitado={ctx.plugin_manager.enable(args.name)} {args.name}")
+
+
+def cmd_plugin_disable(args, ctx: AppContext) -> None:
+    print(f"deshabilitado={ctx.plugin_manager.disable(args.name)} {args.name}")
+
+
+def cmd_mcp(args, ctx: AppContext) -> None:
+    print(f"MCP tools expuestas: {len(ctx.mcp.registry.list_tools())}")
+    for t in ctx.mcp.registry.list_tools():
+        print(f"  - {t['name']}: {t['description']}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="argos", description="ARGOS CLI")
     sub = p.add_subparsers(dest="cmd")
@@ -175,6 +217,22 @@ def build_parser() -> argparse.ArgumentParser:
     i = sub.add_parser("install-service", help="instala como servicio (systemd/Windows)")
     i.add_argument("component", choices=["server", "agent"], nargs="?", default="server")
     i.set_defaults(func=cmd_install_service)
+    pg = sub.add_parser("plugins", help="lista plugins instalados y disponibles")
+    pg.set_defaults(func=cmd_plugins)
+    pi = sub.add_parser("plugin-install", help="instala un plugin del marketplace")
+    pi.add_argument("name")
+    pi.set_defaults(func=cmd_plugin_install)
+    pu = sub.add_parser("plugin-uninstall", help="desinstala un plugin")
+    pu.add_argument("name")
+    pu.set_defaults(func=cmd_plugin_uninstall)
+    pe = sub.add_parser("plugin-enable", help="habilita un plugin")
+    pe.add_argument("name")
+    pe.set_defaults(func=cmd_plugin_enable)
+    pd = sub.add_parser("plugin-disable", help="deshabilita un plugin")
+    pd.add_argument("name")
+    pd.set_defaults(func=cmd_plugin_disable)
+    mc = sub.add_parser("mcp", help="lista tools expuestas via MCP")
+    mc.set_defaults(func=cmd_mcp)
     return p
 
 

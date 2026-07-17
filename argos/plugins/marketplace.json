@@ -1,0 +1,177 @@
+{
+  "name": "argos-marketplace",
+  "version": "1.0.0",
+  "description": "Cat\u00e1logo oficial de plugins ARGOS",
+  "plugins": [
+    {
+      "name": "events-query",
+      "version": "1.0.0",
+      "description": "Consulta avanzada de eventos de seguridad",
+      "category": "detection",
+      "permissions": [
+        "read"
+      ],
+      "entry_point": "argos.plugins.compat:EventsQueryPlugin",
+      "components": {
+        "hooks": [
+          "pre_detection"
+        ],
+        "commands": [
+          "events"
+        ]
+      },
+      "source": {
+        "type": "local",
+        "path": "./argos/plugins/installed/events-query"
+      }
+    },
+    {
+      "name": "process-tree",
+      "version": "1.0.0",
+      "description": "Analisis del arbol de procesos",
+      "category": "detection",
+      "permissions": [
+        "read"
+      ],
+      "entry_point": "argos.plugins.compat:ProcessTreePlugin",
+      "components": {
+        "hooks": [
+          "pre_detection"
+        ]
+      },
+      "source": {
+        "type": "local",
+        "path": "./argos/plugins/installed/process-tree"
+      }
+    },
+    {
+      "name": "network-connections",
+      "version": "1.0.0",
+      "description": "Conexiones de red activas",
+      "category": "detection",
+      "permissions": [
+        "read"
+      ],
+      "entry_point": "argos.plugins.compat:NetworkConnectionsPlugin",
+      "components": {
+        "hooks": [
+          "pre_detection"
+        ]
+      },
+      "source": {
+        "type": "local",
+        "path": "./argos/plugins/installed/network-connections"
+      }
+    },
+    {
+      "name": "alerts-manager",
+      "version": "1.0.0",
+      "description": "Gestion de alertas de seguridad",
+      "category": "response",
+      "permissions": [
+        "read"
+      ],
+      "entry_point": "argos.plugins.compat:AlertsManagerPlugin",
+      "components": {
+        "hooks": [
+          "on_alert"
+        ]
+      },
+      "source": {
+        "type": "local",
+        "path": "./argos/plugins/installed/alerts-manager"
+      }
+    },
+    {
+      "name": "threat-intel",
+      "version": "1.0.0",
+      "description": "Inteligencia de amenazas / lookup de IOCs",
+      "category": "analytics",
+      "permissions": [
+        "analyze"
+      ],
+      "entry_point": "argos.plugins.compat:ThreatIntelPlugin",
+      "components": {
+        "hooks": [
+          "post_detection"
+        ]
+      },
+      "source": {
+        "type": "local",
+        "path": "./argos/plugins/installed/threat-intel"
+      }
+    },
+    {
+      "name": "detection-coverage",
+      "version": "1.0.0",
+      "description": "Cobertura MITRE ATT&CK del motor",
+      "category": "analytics",
+      "permissions": [
+        "read"
+      ],
+      "entry_point": "argos.plugins.compat:DetectionCoveragePlugin",
+      "components": {
+        "hooks": []
+      },
+      "source": {
+        "type": "local",
+        "path": "./argos/plugins/installed/detection-coverage"
+      }
+    },
+    {
+      "name": "yara-scanner",
+      "version": "1.0.0",
+      "description": "Escaneo con reglas YARA",
+      "category": "detection",
+      "permissions": [
+        "analyze"
+      ],
+      "entry_point": "argos.plugins.compat:YaraScannerPlugin",
+      "components": {
+        "hooks": [
+          "pre_detection"
+        ]
+      },
+      "source": {
+        "type": "local",
+        "path": "./argos/plugins/installed/yara-scanner"
+      }
+    },
+    {
+      "name": "network-recon",
+      "version": "1.0.0",
+      "description": "Reconocimiento de red (port/ping/traceroute/dns)",
+      "category": "detection",
+      "permissions": [
+        "analyze"
+      ],
+      "entry_point": "argos.plugins.compat:NetworkReconPlugin",
+      "components": {
+        "hooks": []
+      },
+      "source": {
+        "type": "local",
+        "path": "./argos/plugins/installed/network-recon"
+      }
+    },
+    {
+      "name": "event-correlation",
+      "version": "1.0.0",
+      "description": "Correlacion de eventos en cadenas de ataque",
+      "category": "analytics",
+      "permissions": [
+        "analyze"
+      ],
+      "entry_point": "argos.plugins.compat:EventCorrelationPlugin",
+      "components": {
+        "hooks": [
+          "post_detection"
+        ]
+      },
+      "source": {
+        "type": "local",
+        "path": "./argos/plugins/installed/event-correlation"
+      }
+    }
+  ]
+}

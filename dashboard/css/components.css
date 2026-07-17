@@ -1,0 +1,18 @@
+/* Componentes reutilizables y helpers de layout adicionales. */
+.panel-actions { display: flex; gap: 8px; margin-bottom: 12px; }
+.empty { color: var(--text-dim); padding: 24px; text-align: center; }
+.pill { display: inline-flex; align-items: center; gap: 6px; }
+.kv { display: grid; grid-template-columns: 140px 1fr; gap: 6px 12px; font-size: 13px; }
+.kv dt { color: var(--text-dim); }
+.kv dd { margin: 0; }
+.drawer { position: fixed; top: 0; right: -420px; width: 400px; height: 100vh; background: var(--bg-elev); border-left: 1px solid var(--border); box-shadow: var(--shadow); transition: right .25s; padding: 20px; overflow: auto; z-index: 40; }
+.drawer.open { right: 0; }
+.modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: none; align-items: center; justify-content: center; z-index: 60; }
+.modal-backdrop.open { display: flex; }
+.modal { background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; width: min(560px, 92vw); max-height: 86vh; overflow: auto; }
+.code { font-family: var(--mono); font-size: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px; white-space: pre-wrap; }
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 14px; }
+.tabs button { background: none; border: none; color: var(--text-dim); padding: 8px 12px; cursor: pointer; border-bottom: 2px solid transparent; }
+.tabs button.active { color: var(--text); border-bottom-color: var(--accent); }
+.bar { height: 8px; border-radius: 6px; background: var(--bg-elev-2); overflow: hidden; }
+.bar > i { display: block; height: 100%; background: var(--accent); }

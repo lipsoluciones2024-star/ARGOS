@@ -1,0 +1,15 @@
+{
+  "generated": true,
+  "catalog": "argos-marketplace",
+  "plugins": [
+    "events-query",
+    "process-tree",
+    "network-connections",
+    "alerts-manager",
+    "threat-intel",
+    "detection-coverage",
+    "yara-scanner",
+    "network-recon",
+    "event-correlation"
+  ]
+}

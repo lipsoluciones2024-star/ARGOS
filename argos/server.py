@@ -45,6 +45,7 @@ from argos.storage.network_baseline import NetworkBaselineStore
 from argos.storage.rules import RulesStore
 from argos.storage.settings import SettingsStore
 from argos.storage.store import AlertStore, AuditLog, EventStore
+from argos.storage.ui_prefs import UiPrefsStore
 from argos.storage.users import UsersStore
 
 UI_DIR = Path(__file__).resolve().parent.parent / "dashboard"
@@ -67,6 +68,7 @@ class AppContext:
             )
         self.limiter = RateLimiter(max_requests=cfg.rate_limit_per_hour, window_sec=3600)
         self.settings = SettingsStore(cfg)
+        self.ui_prefs = UiPrefsStore(cfg)
         self.store = EventStore(cfg)
         self.alert_store = AlertStore(cfg)
         self.audit = AuditLog(cfg)
@@ -92,6 +94,43 @@ class AppContext:
                                             response=self.response, on_proposal=self._push_proposal,
                                             chatlog=self.chatlog, memory=self.memory,
                                             context=ContextRetriever(self.memory, self.chatlog))
+        # --- Capa enterprise XAI: Tool Gateway, MCP y Plugins -------------------
+        from argos.ai.tools.gateway import ToolGateway, ToolGatewayConfig
+        from argos.ai.tools.registry import ToolExecutor
+        from argos.mcp.server import MCPServer
+        from argos.observability.health import health as health_registry
+        from argos.plugins import build_plugin_runtime
+
+        self.tool_executor = ToolExecutor(self.store, self.engine, self.intel, response=self.response)
+        self.gateway = ToolGateway(self.tool_executor, ToolGatewayConfig())
+        self.mcp = MCPServer(self.tool_executor)
+        self.plugin_registry, self.plugin_manager = build_plugin_runtime(
+            Path(__file__).resolve().parent / "plugins" / "installed"
+        )
+        # Hook built-in de deteccion: comportamental + threat intel (Fase R2).
+        from argos.detection.hooks_integration import register_detection_hooks
+
+        self.detection_hook = register_detection_hooks(self.plugin_registry, self.intel)
+        # Entrenar baseline con eventos recientes si hay suficientes.
+        try:
+            recent = self.store.query(filters={}, limit=2000)
+            if len(recent) >= 50:
+                self.detection_hook.train(recent)
+        except Exception:
+            pass
+        health_registry.register("database", lambda: {
+            "status": "ok" if (cfg.data_dir / "argos.db").exists() else "degraded",
+            "path": str(cfg.data_dir / "argos.db"),
+        })
+        health_registry.register("engine", lambda: {
+            "status": "ok",
+            "sigma_rules": len(self.engine.rules),
+            "yara_rules": len(self.engine.yara.rules),
+        }, critical=False)
+        health_registry.register("switch", lambda: {
+            "status": "ok", "level": self.response.switch.level.value
+        }, critical=False)
+        self.health_registry = health_registry
         self.deduper = Deduper()
         self.autonomy = AutonomyLoop(self, cfg)
         self.local_runtime = LocalRuntimeServer(cfg)
@@ -130,6 +169,18 @@ class AppContext:
         n = self.store.ingest_many(events)
         self.logger.debug("ingest: %d eventos validados y almacenados", n)
         alerts = self.engine.evaluate_batch(events)
+        # Hook built-in de deteccion (comportamental + threat intel) por evento.
+        try:
+            from argos.plugins.base import HookEvent
+
+            for e in events:
+                ctx = {"event": e, "alerts": []}
+                self.plugin_registry.execute_hooks(HookEvent.POST_DETECTION, ctx)
+                extra = ctx.get("alerts") or []
+                if isinstance(extra, list):
+                    alerts.extend(extra)
+        except Exception as exc:
+            self.logger.warning("Hook POST_DETECTION fallo: %s", exc)
         for a in alerts:
             self.alert_store.add(a)
             self.logger.info("ALERTA %s: %s en %s (%s)", a.severity.value.upper(), a.title, a.host, a.attack_id)
@@ -331,6 +382,20 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     @app.put("/api/v1/settings")
     async def put_settings(payload: dict):
         return ctx.settings.set_many(payload)
+
+    @app.get("/api/v1/ui/preferences")
+    async def get_ui_preferences(request: Request):
+        _, err = _auth(request, "operator")
+        if err:
+            return err
+        return ctx.ui_prefs.get_all()
+
+    @app.put("/api/v1/ui/preferences")
+    async def put_ui_preferences(request: Request, payload: dict = Body(...)):
+        _, err = _auth(request, "operator")
+        if err:
+            return err
+        return ctx.ui_prefs.update(payload)
 
     # ------------------------------------------------------------------
     # Helpers de autorización por rol (Fase E)
@@ -700,6 +765,15 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             return JSONResponse(status_code=404, content={"error": "indicador no encontrado"})
         return {"removed": indicator}
 
+    @app.get("/api/v1/threat-intel/feeds")
+    async def ti_feeds(request: Request):
+        _, err = _auth(request, "operator")
+        if err:
+            return err
+        from argos.detection.ti_feeds import load_feeds
+
+        return {"feeds": [f.__dict__ for f in load_feeds()]}
+
     @app.post("/api/v1/cases")
     async def cases_create(payload: dict, request: Request):
         ok, claims = require_role(request, "operator")
@@ -991,6 +1065,131 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                     await ctx.manager.send(ws, {"type": "error", "content": "unknown message type"})
         except WebSocketDisconnect:
             ctx.manager.disconnect(ws)
+
+    # --- MCP (Model Context Protocol) endpoints ----------------------------------
+    @app.post("/api/v1/mcp")
+    async def mcp_http(request: Request, payload: dict = Body(...)):
+        role = "admin"
+        if cfg.require_auth:
+            claims, err = _auth(request, "operator")
+            if err:
+                return err
+            role = claims.get("role", "operator")
+        from argos.observability.metrics import MCP_REQUESTS, metrics
+        out = await asyncio.to_thread(ctx.mcp.handle, payload, role)
+        if "error" not in out:
+            metrics.inc(MCP_REQUESTS, 1)
+        return out
+
+    @app.websocket("/api/v1/mcp/ws")
+    async def mcp_ws(ws: WebSocket):
+        token = ws_token_from_request(ws)
+        claims = authorize_ws(cfg, ctx.auth_secret, token)
+        if claims is None:
+            await ws.close(code=1008, reason="unauthorized")
+            return
+        await ws.accept()
+        role = claims.get("role", "operator")
+        try:
+            while True:
+                data = await ws.receive_json()
+                out = await asyncio.to_thread(ctx.mcp.handle, data, role)
+                await ws.send_json(out)
+        except WebSocketDisconnect:
+            pass
+
+    # --- Plugin System endpoints ------------------------------------------------
+    @app.get("/api/v1/plugins")
+    async def plugins_list(request: Request):
+        _, err = _auth(request, "admin")
+        if err:
+            return err
+        return {
+            "installed": ctx.plugin_registry.list_installed(),
+            "marketplace": ctx.plugin_registry.available_in_marketplace(),
+        }
+
+    @app.post("/api/v1/plugins/install")
+    async def plugin_install(request: Request, payload: dict = Body(...)):
+        _, err = _auth(request, "admin")
+        if err:
+            return err
+        name = payload.get("name")
+        if not name:
+            return JSONResponse({"error": "name requerido"}, status_code=400)
+        manifest = ctx.plugin_registry.available_in_marketplace()
+        from argos.plugins.marketplace import MARKETPLACE
+
+        m = MARKETPLACE.get(name) or next(
+            (p for p in manifest if p["name"] == name), None
+        )
+        if m is None:
+            return JSONResponse({"error": f"plugin '{name}' no esta en el marketplace"}, status_code=404)
+        from argos.plugins.base import PluginManifest
+
+        man = m if isinstance(m, PluginManifest) else PluginManifest.from_dict(m)
+        ok = ctx.plugin_manager.install(man)
+        return {"installed": ok, "name": name}
+
+    @app.post("/api/v1/plugins/uninstall")
+    async def plugin_uninstall(request: Request, payload: dict = Body(...)):
+        _, err = _auth(request, "admin")
+        if err:
+            return err
+        name = payload.get("name")
+        if not name:
+            return JSONResponse({"error": "name requerido"}, status_code=400)
+        ok = ctx.plugin_manager.uninstall(name)
+        return {"uninstalled": ok, "name": name}
+
+    @app.post("/api/v1/plugins/{name}/enable")
+    async def plugin_enable(request: Request, name: str):
+        _, err = _auth(request, "admin")
+        if err:
+            return err
+        return {"enabled": ctx.plugin_manager.enable(name), "name": name}
+
+    @app.post("/api/v1/plugins/{name}/disable")
+    async def plugin_disable(request: Request, name: str):
+        _, err = _auth(request, "admin")
+        if err:
+            return err
+        return {"disabled": ctx.plugin_manager.disable(name), "name": name}
+
+    # --- Tool Gateway & Observability endpoints ---------------------------------
+    @app.get("/api/v1/gateway/metrics")
+    async def gateway_metrics(request: Request):
+        _, err = _auth(request, "admin")
+        if err:
+            return err
+        return ctx.gateway.metrics()
+
+    @app.post("/api/v1/gateway/breaker/reset")
+    async def gateway_reset_breaker(request: Request, payload: dict = Body(...)):
+        _, err = _auth(request, "admin")
+        if err:
+            return err
+        name = payload.get("name")
+        if not name:
+            return JSONResponse({"error": "name requerido"}, status_code=400)
+        return {"reset": ctx.gateway.reset_breaker(name), "name": name}
+
+    @app.get("/api/v1/observability/metrics")
+    async def observability_metrics(request: Request):
+        _, err = _auth(request, "admin")
+        if err:
+            return err
+        from argos.observability.metrics import ACTIVE_ALERTS, metrics
+
+        metrics.set_gauge(ACTIVE_ALERTS, len(ctx.alert_store.recent(limit=1000)))
+        return {"metrics": metrics.snapshot(), "prometheus": metrics.render_prometheus()}
+
+    @app.get("/api/v1/observability/health")
+    async def observability_health(request: Request):
+        _, err = _auth(request, "operator")
+        if err:
+            return err
+        return ctx.health_registry.run()
 
     if UI_DIR.exists():
         app.mount("/static", StaticFiles(directory=UI_DIR), name="static")
