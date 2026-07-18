@@ -7,6 +7,23 @@ from pathlib import Path
 from typing import Optional
 
 
+def _load_dotenv() -> None:
+    """Carga variables de entorno desde un archivo .env si existe (sin dependencias).
+    Solo sobreescribe variables que aun no esten definidas en el entorno."""
+    path = Path(__file__).resolve().parent.parent / ".env"
+    if not path.exists():
+        return
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        val = val.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = val
+
+
 class LlmMode(str, Enum):
     HYBRID = "hybrid"
     REMOTE = "remote"
@@ -105,6 +122,7 @@ def _load_remote_providers(cfg: Config) -> list[RemoteProvider]:
 
 
 def load_config() -> Config:
+    _load_dotenv()
     cfg = Config()
     cfg.kilo_api_key = os.environ.get("KILO_API_KEY")
     mode = os.environ.get("ARGOS_LLM_MODE")

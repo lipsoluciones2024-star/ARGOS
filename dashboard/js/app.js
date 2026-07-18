@@ -38,6 +38,17 @@
       store.set({ theme: store.get("theme") === "light" ? "dark" : "light" });
       applyTheme();
     });
+
+    if (!global.ArgosApi.getToken()) {
+      global.ArgosLogin.render(() => {
+        navigate(store.get("view") || "monitor");
+        const badge = document.getElementById("user-badge");
+        const u = store.get("user");
+        if (badge && u) badge.textContent = u.username + " (" + u.role + ")";
+      });
+      return;
+    }
+
     global.ArgosWS.connect(
       (msg) => {
         if (msg.type === "proactive_alert" || msg.type === "alert") {
@@ -53,6 +64,9 @@
       }
     );
     navigate(store.get("view") || "monitor");
+    const badge = document.getElementById("user-badge");
+    const u = store.get("user");
+    if (badge && u) badge.textContent = u.username + " (" + u.role + ")";
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);

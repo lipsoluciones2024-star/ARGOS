@@ -30,7 +30,7 @@ from argos.scan import network as net_scan
 from argos.scan.monitor import run_monitor_scan
 from argos.scheduler import Scheduler
 from argos.security import cors_origins, derive_secret
-from argos.security.auth import sign_token
+from argos.security.auth import sign_token, derive_secret
 from argos.security.middleware import (
     AuthMiddleware,
     authorize_ws,
@@ -460,6 +460,26 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         ttl = int(payload.get("ttl", 0) or 0)
         token = sign_token(ctx.auth_secret, role, sub=sub, ttl=ttl)
         return {"token": token, "role": role}
+
+    @app.post("/api/v1/auth/login")
+    async def auth_login(payload: dict, request: Request):
+        """Login por usuario/clave. Ruta pública (rate-limited por IP).
+        Emite un token HMAC firmado con el rol del usuario."""
+        client_ip = request.client.host if request.client else "anon"
+        if not ctx.limiter.is_allowed(client_ip):
+            return JSONResponse(status_code=429, content={"error": "rate limit exceeded"})
+        username = str(payload.get("username", "")).strip()
+        password = str(payload.get("password", ""))
+        if not username or not password:
+            return JSONResponse(status_code=400, content={"error": "username y password requeridos"})
+        user = ctx.users.authenticate(username, password)
+        if user is None:
+            ctx.audit.append("auth_login", username, "unknown", "denied", {"ip": client_ip})
+            return JSONResponse(status_code=401, content={"error": "credenciales inválidas"})
+        ttl = int(payload.get("ttl", 0) or 0)
+        token = sign_token(ctx.auth_secret, user["role"], sub=user["id"], ttl=ttl)
+        ctx.audit.append("auth_login", username, user["role"], "success", {"ip": client_ip})
+        return {"token": token, "role": user["role"], "username": user["username"]}
 
     @app.get("/api/v1/users")
     async def users_list(request: Request):
